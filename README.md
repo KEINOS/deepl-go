@@ -1,4 +1,4 @@
-<div style="text-align: center;">
+<div align="center">
 
   [![deepl-go][repo_logo_img]][repo_url]
 
