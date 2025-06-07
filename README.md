@@ -1,7 +1,6 @@
-<div align="center">
+<div style="text-align: center;">
 
-<img width="128px" src="go-deepl-logo.svg"/>
+# deepl-go
 
-# go-deepl API
+deepl-go is an unofficial, lightweight, and easy-to-use client library for interfacing with the DeepL translation API. It enables developers to integrate DeepL's powerful translation services into their Go applications effortlessly. With deepl-go, you can perform translations, detect languages, and manage glossary entries programmatically with minimal setup.
 </div>
-
