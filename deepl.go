@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 const (
 	baseURL     = "https://api.deepl.com"
 	baseURLFree = "https://api-free.deepl.com"
-	version     = "0.0.1"
+	version     = "0.1.0"
 )
 
 var httpErrorMessages = map[int]string{
@@ -64,6 +65,18 @@ func WithProxy(proxy url.URL) Option {
 	return func(c *Client) {
 		c.httpClient.Transport = &http.Transport{
 			Proxy: http.ProxyURL(&proxy),
+		}
+	}
+}
+
+func WithTrace() Option {
+	return func(c *Client) {
+		prev := c.httpClient.Transport
+		if prev == nil {
+			prev = http.DefaultTransport
+		}
+		c.httpClient.Transport = &LoggingRoundTripper{
+			Proxied: prev,
 		}
 	}
 }
@@ -121,4 +134,32 @@ func getErrorMessage(status int) (bool, string) {
 		return found, msg
 	}
 	return false, ""
+}
+
+type LoggingRoundTripper struct {
+	Proxied http.RoundTripper
+}
+
+func (lrt *LoggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	reqDump, err := httputil.DumpRequestOut(req, true)
+	if err != nil {
+		log.Printf("error dumping request: %v", err)
+	} else {
+		log.Printf("HTTP Request:\n%s", string(reqDump))
+	}
+
+	res, err := lrt.Proxied.RoundTrip(req)
+	if err != nil {
+		log.Printf("error during round trip: %v", err)
+		return nil, err
+	}
+
+	resDump, err := httputil.DumpResponse(res, true)
+	if err != nil {
+		log.Printf("error dumping response: %v", err)
+	} else {
+		log.Printf("HTTP Response:\n%s", string(resDump))
+	}
+
+	return res, nil
 }
