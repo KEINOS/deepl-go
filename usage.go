@@ -4,15 +4,23 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 type Usage struct {
-	CharacterCount    uint `json:"character_count"`
-	CharacterLimit    uint `json:"character_limit"`
-	DocumentCount     uint `json:"document_count"`
-	DocumentLimit     uint `json:"document_limit"`
-	TeamDocumentCount uint `json:"team_document_count"`
-	TeamDocumentLimit uint `json:"team_document_limit"`
+	CharacterCount       int64          `json:"character_count"`
+	CharacterLimit       int64          `json:"character_limit"`
+	Products             []ProductUsage `json:"products,omitempty"`
+	APIKeyCharacterCount *int64         `json:"api_key_character_count,omitempty"`
+	APIKeyCharacterLimit *int64         `json:"api_key_character_limit,omitempty"`
+	StartTime            *time.Time     `json:"start_time,omitempty"`
+	EndTime              *time.Time     `json:"end_time,omitempty"`
+}
+
+type ProductUsage struct {
+	ProductType          string `json:"product_type"`
+	APIKeyCharacterCount int64  `json:"api_key_character_count"`
+	CharacterCount       int64  `json:"character_count"`
 }
 
 func (c *Client) GetUsage() (*Usage, error) {
