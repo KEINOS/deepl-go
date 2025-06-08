@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
@@ -80,23 +79,9 @@ func (c *Client) sendRequest(req *http.Request, v interface{}) error {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
 
-	// debugging
-	dump, err := httputil.DumpRequestOut(req, true)
-	if err != nil {
-		fmt.Printf(err.Error())
-	}
-	fmt.Printf("%s\n\n", dump)
-
 	res, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
-	}
-
-	// debugging
-	if resDump, err := httputil.DumpResponse(res, true); err != nil {
-		fmt.Printf(err.Error())
-	} else {
-		fmt.Printf("%s\n\n", resDump)
 	}
 
 	defer func(Body io.ReadCloser) {
@@ -136,40 +121,4 @@ func getErrorMessage(status int) (bool, string) {
 		return found, msg
 	}
 	return false, ""
-}
-
-type LoggingRoundTripper struct {
-	Proxied http.RoundTripper
-}
-
-func (lrt LoggingRoundTripper) RoundTrip(req *http.Request) (res *http.Response, e error) {
-	log.Printf("--> %s %v\n", req.Method, req.URL)
-	// debugging
-	dump, err := httputil.DumpRequestOut(req, true)
-	if err != nil {
-		log.Printf(err.Error())
-	}
-
-	fmt.Printf("%s\n\n", dump)
-	//startTime := time.Now()
-	if res, err := lrt.Proxied.RoundTrip(req); err != nil {
-		dump, err = httputil.DumpResponse(res, true)
-		if err != nil {
-			log.Printf(err.Error())
-		}
-		log.Printf("Error: %v", e)
-	} else {
-		//log.Printf("<-- %s (%dms)\n", res.Status, time.Since(startTime)/time.Millisecond)
-		//body, err := ioutil.ReadAll(res.Body)
-		//if err != nil {
-		//	log.Println(err)
-		//}
-		//log.Println(string(body))
-		dump, err = httputil.DumpResponse(res, true)
-		if err != nil {
-			log.Printf(err.Error())
-		}
-	}
-
-	return lrt.Proxied.RoundTrip(req)
 }
