@@ -163,3 +163,7 @@ func (lrt *LoggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 
 	return res, nil
 }
+
+func BoolPtr(b bool) *bool {
+	return &b
+}
