@@ -75,7 +75,7 @@ func WithTrace() Option {
 		if prev == nil {
 			prev = http.DefaultTransport
 		}
-		c.httpClient.Transport = &LoggingRoundTripper{
+		c.httpClient.Transport = &loggingRoundTripper{
 			Proxied: prev,
 		}
 	}
@@ -136,11 +136,11 @@ func getErrorMessage(status int) (bool, string) {
 	return false, ""
 }
 
-type LoggingRoundTripper struct {
+type loggingRoundTripper struct {
 	Proxied http.RoundTripper
 }
 
-func (lrt *LoggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+func (lrt *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqDump, err := httputil.DumpRequestOut(req, true)
 	if err != nil {
 		log.Printf("error dumping request: %v", err)
