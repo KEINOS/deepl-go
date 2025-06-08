@@ -1,4 +1,4 @@
-package deepl_go
+package deepl
 
 import (
 	"bytes"
