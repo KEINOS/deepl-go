@@ -2,8 +2,8 @@ package deepl
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -85,7 +85,7 @@ type errorResponse struct {
 	Message string `json:"message"`
 }
 
-func (c *Client) sendRequest(req *http.Request, v interface{}) error {
+func (c *Client) sendRequest(req *http.Request, v interface{}) (err error) {
 	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
 	req.Header.Set("Content-Type", "application/json")
 	if c.userAgent != "" {
@@ -97,23 +97,28 @@ func (c *Client) sendRequest(req *http.Request, v interface{}) error {
 		return err
 	}
 
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Println(err)
+	defer func() {
+		if closeErr := res.Body.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
-	}(res.Body)
+	}()
 
 	if res.StatusCode != http.StatusOK {
+		errorMsg := "unknown error"
 		if found, message := getErrorMessage(res.StatusCode); found {
-			return fmt.Errorf("%s, status code: %d", message, res.StatusCode)
+			errorMsg = message
 		}
 		var errRes errorResponse
-		if err = json.NewDecoder(res.Body).Decode(&errRes); err == nil {
-			return fmt.Errorf("%s, status code: %d", errRes.Message, res.StatusCode)
+		errDecode := json.NewDecoder(res.Body).Decode(&errRes)
+		if errDecode == nil && errRes.Message != "" {
+			errorMsg = fmt.Sprintf(
+				"HTTP %d: %s --> %s",
+				res.StatusCode,
+				errorMsg,
+				errRes.Message,
+			)
 		}
-
-		return fmt.Errorf("unknown error, status code: %d", res.StatusCode)
+		return fmt.Errorf(errorMsg)
 	}
 
 	if err = json.NewDecoder(res.Body).Decode(&v); err != nil {
