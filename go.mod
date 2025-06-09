@@ -1,3 +1,3 @@
 module github.com/lkretschmer/deepl-go
 
-go 1.21
+go 1.20
