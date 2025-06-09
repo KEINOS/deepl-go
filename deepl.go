@@ -1,10 +1,15 @@
 package deepl
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -17,6 +22,16 @@ const (
 	baseURLFree = "https://api-free.deepl.com"
 	version     = "0.2.0"
 )
+
+type retryPolicy struct {
+	MaxRetries int
+	MaxDelay   time.Duration
+}
+
+var defaultRetryPolicy = retryPolicy{
+	MaxRetries: 5,
+	MaxDelay:   10 * time.Second,
+}
 
 // httpErrorMessages maps HTTP status codes to human-readable error messages.
 var httpErrorMessages = map[int]string{
@@ -34,10 +49,11 @@ var httpErrorMessages = map[int]string{
 
 // Client represents a DeepL API client.
 type Client struct {
-	apiKey     string       // API authentication key
-	baseURL    string       // Base URL for API endpoints (depends on API key type)
-	userAgent  string       // User-Agent header value sent with requests
-	httpClient *http.Client // Underlying HTTP client used for requests
+	apiKey      string       // API authentication key
+	baseURL     string       // Base URL for API endpoints (depends on API key type)
+	userAgent   string       // User-Agent header value sent with requests
+	httpClient  *http.Client // Underlying HTTP client used for requests
+	retryPolicy retryPolicy  // retryPolicy represents the retry logic configuration including maximum retries and maximum delay duration.
 }
 
 // Option defines a functional option for configuring the DeepL Client.
@@ -51,8 +67,9 @@ func NewClient(apiKey string, opts ...func(c *Client)) *Client {
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
-		baseURL:   getBaseURL(apiKey),
-		userAgent: "deepl-go/" + version,
+		baseURL:     getBaseURL(apiKey),
+		userAgent:   "deepl-go/" + version,
+		retryPolicy: defaultRetryPolicy,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -76,6 +93,16 @@ func WithProxy(proxy url.URL) Option {
 	}
 }
 
+// WithRetryPolicy returns an Option that sets the maximum retry attempts and maximum delay for retrying failed requests.
+func WithRetryPolicy(maxRetryAttempts, maxDelaySeconds int) Option {
+	return func(c *Client) {
+		c.retryPolicy = retryPolicy{
+			MaxRetries: maxRetryAttempts,
+			MaxDelay:   time.Duration(maxDelaySeconds) * time.Second,
+		}
+	}
+}
+
 // WithTrace returns an Option that enables HTTP request and response logging for debugging.
 func WithTrace() Option {
 	return func(c *Client) {
@@ -92,6 +119,86 @@ func WithTrace() Option {
 // errorResponse represents the error message returned by the DeepL API in JSON format.
 type errorResponse struct {
 	Message string `json:"message"` // Human-readable error message
+}
+
+// sendRequestWithRetry wraps sendRequest adding retry logic for 429 and 503 errors.
+func (c *Client) sendRequestWithRetry(ctx context.Context, req *http.Request, v interface{}) error {
+	var lastErr error
+	backoff := 500 * time.Millisecond // initial backoff
+
+	for attempt := 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
+		clonedReq, err := cloneRequest(req)
+		if err != nil {
+			return fmt.Errorf("failed to clone request: %w", err)
+		}
+
+		err = c.sendRequest(clonedReq, v)
+		if err == nil {
+			return nil
+		}
+
+		if !c.shouldRetry(err) {
+			return err
+		}
+
+		lastErr = err
+
+		// If last attempt, break
+		if attempt == c.retryPolicy.MaxRetries {
+			break
+		}
+
+		// Calculate delay with binary exponential backoff + jitter
+		delay := c.calculateRetryDelay(attempt, backoff)
+
+		select {
+		case <-time.After(delay):
+			backoff = delay // update backoff to last used delay before next retry
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+		}
+	}
+
+	return fmt.Errorf("after %d retries: %w", c.retryPolicy.MaxRetries, lastErr)
+}
+
+// shouldRetry examines the error message and returns true if it's retryable
+func (c *Client) shouldRetry(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "HTTP 429") || strings.Contains(s, "HTTP 503")
+}
+
+// calculateRetryDelay uses binary exponential backoff with jitter
+func (c *Client) calculateRetryDelay(attempt int, prevBackoff time.Duration) time.Duration {
+	// Calculate exponential delay: 2^attempt * base, capped at max delay
+	exp := time.Duration(math.Pow(2, float64(attempt))) * prevBackoff
+	if exp > c.retryPolicy.MaxDelay {
+		exp = c.retryPolicy.MaxDelay
+	}
+
+	// Jitter: random delay between 0 and exp
+	return time.Duration(rand.Int63n(int64(exp) + 1))
+}
+
+// cloneRequest creates a deep copy of the *http.Request including the body.
+func cloneRequest(req *http.Request) (*http.Request, error) {
+	cloned := req.Clone(req.Context())
+
+	if req.Body == nil || req.Body == http.NoBody {
+		return cloned, nil
+	}
+
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	// Reset the original body for potential reuse
+	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	cloned.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	return cloned, nil
 }
 
 // sendRequest sends an HTTP request to the DeepL API and decodes the response into the provided value v.

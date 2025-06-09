@@ -1,7 +1,9 @@
 package deepl
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,7 +117,7 @@ func TestSendRequest(t *testing.T) {
 		return MockResponse(200, testResponse{Value: "test-value"})
 	})
 
-	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
 	var resp testResponse
 
 	err := client.sendRequest(req, &resp)
@@ -162,7 +164,7 @@ func TestSendRequestWithErrorStatus(t *testing.T) {
 				}
 			})
 
-			req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+			req, _ := http.NewRequest(http.MethodPost, "https://api.deepl.com/some-endpoint", nil)
 			var resp interface{}
 
 			err := client.sendRequest(req, &resp)
@@ -186,7 +188,7 @@ func TestSendRequestWithJSONDecodeError(t *testing.T) {
 		}
 	})
 
-	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
 	var resp interface{}
 
 	err := client.sendRequest(req, &resp)
@@ -234,5 +236,104 @@ func TestGetErrorMessage(t *testing.T) {
 		if tc.expectedFound && !strings.HasPrefix(message, tc.expectedPrefix) {
 			t.Errorf("getErrorMessage(%d) message = %q, expected prefix %q", tc.statusCode, message, tc.expectedPrefix)
 		}
+	}
+}
+
+func TestSendRequestWithRetry_RetryOn429ThenSuccess(t *testing.T) {
+	attempt := 0
+	client := NewTestClient(func(req *http.Request) *http.Response {
+		attempt++
+		if attempt == 1 {
+			return MockResponse(429, map[string]string{"message": "too many requests"})
+		}
+		return MockResponse(200, map[string]string{"message": "ok"})
+	})
+	client.retryPolicy = retryPolicy{MaxRetries: 3, MaxDelay: 500 * time.Millisecond}
+
+	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
+
+	var er errorResponse
+	start := time.Now()
+	err := client.sendRequestWithRetry(context.Background(), req, &er)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected success after retry, got error %v", err)
+	}
+	if attempt != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempt)
+	}
+	if elapsed < 0 {
+		t.Fatalf("expected some retry delay, got %v", elapsed)
+	}
+}
+
+func TestSendRequestWithRetry_ExceedsMaxRetries(t *testing.T) {
+	attempt := 0
+	client := NewTestClient(func(req *http.Request) *http.Response {
+		attempt++
+		return MockResponse(503, map[string]string{"message": "service unavailable"})
+	})
+	client.retryPolicy = retryPolicy{MaxRetries: 2, MaxDelay: 10 * time.Millisecond}
+
+	req, _ := http.NewRequest(http.MethodPost, "https://api.deepl.com/some-endpoint", nil)
+	var er errorResponse
+
+	err := client.sendRequestWithRetry(context.Background(), req, &er)
+
+	if err == nil {
+		t.Fatalf("expected error after retries exceeded, got nil")
+	}
+	if !strings.Contains(err.Error(), "after 2 retries") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+	if attempt != 3 {
+		t.Errorf("expected 3 attempts (initial + 2 retries), got %d", attempt)
+	}
+}
+
+func TestSendRequestWithRetry_DoNotRetryOnOtherError(t *testing.T) {
+	attempt := 0
+	client := NewTestClient(func(req *http.Request) *http.Response {
+		attempt++
+		return MockResponse(400, map[string]string{"message": "bad request"})
+	})
+	client.retryPolicy = retryPolicy{MaxRetries: 3, MaxDelay: time.Second}
+
+	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
+	var er errorResponse
+
+	err := client.sendRequestWithRetry(context.Background(), req, &er)
+	if err == nil {
+		t.Fatalf("expected error on 400 response")
+	}
+	if attempt != 1 {
+		t.Errorf("expected no retries on 400, got %d attempts", attempt)
+	}
+}
+
+func TestSendRequestWithRetry_ContextCancel(t *testing.T) {
+	attempt := 0
+	client := NewTestClient(func(req *http.Request) *http.Response {
+		attempt++
+		return MockResponse(503, map[string]string{"message": "service unavailable"})
+	})
+	client.retryPolicy = retryPolicy{MaxRetries: 3, MaxDelay: time.Second}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.deepl.com/some-endpoint", nil)
+	var er errorResponse
+
+	err := client.sendRequestWithRetry(ctx, req, &er)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error due to cancellation, got: %v", err)
+	}
+	if attempt < 1 {
+		t.Fatalf("expected at least one attempt before cancellation, got %d", attempt)
 	}
 }
