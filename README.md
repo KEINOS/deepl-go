@@ -71,7 +71,7 @@ This client library is not an official DeepL product. For official documentation
 
 
 [repo_url]: https://github.com/lkretschmer/deepl-go
-[repo_logo_img]: https://raw.githubusercontent.com/lkretschmer/deepl-go/refs/heads/master/.github/logo.svg
+[repo_logo_img]: https://raw.githubusercontent.com/lkretschmer/deepl-go/refs/heads/main/.github/logo.svg
 [report_card_badge]: https://goreportcard.com/badge/github.com/lkretschmer/deepl-go
 [report_card_url]: https://goreportcard.com/report/github.com/lkretschmer/deepl-go
 [license_badge]: https://img.shields.io/badge/license-MIT-blueviolet.svg
