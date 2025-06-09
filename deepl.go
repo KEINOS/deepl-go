@@ -15,9 +15,10 @@ import (
 const (
 	baseURL     = "https://api.deepl.com"
 	baseURLFree = "https://api-free.deepl.com"
-	version     = "0.1.0"
+	version     = "0.2.0"
 )
 
+// httpErrorMessages maps HTTP status codes to human-readable error messages.
 var httpErrorMessages = map[int]string{
 	400: "Bad request. Please check error message and your parameters.",
 	403: "Authorization failed. Please supply a valid auth_key parameter.",
@@ -31,15 +32,19 @@ var httpErrorMessages = map[int]string{
 	529: "Too many requests. Please wait and resend your request.",
 }
 
+// Client represents a DeepL API client.
 type Client struct {
-	apiKey     string
-	baseURL    string
-	userAgent  string
-	httpClient *http.Client
+	apiKey     string       // API authentication key
+	baseURL    string       // Base URL for API endpoints (depends on API key type)
+	userAgent  string       // User-Agent header value sent with requests
+	httpClient *http.Client // Underlying HTTP client used for requests
 }
 
+// Option defines a functional option for configuring the DeepL Client.
 type Option func(c *Client)
 
+// NewClient creates and returns a new DeepL API client with the given API key and optional configurations.
+// If options are provided, they will be applied to the client.
 func NewClient(apiKey string, opts ...func(c *Client)) *Client {
 	client := &Client{
 		apiKey: apiKey,
@@ -55,12 +60,14 @@ func NewClient(apiKey string, opts ...func(c *Client)) *Client {
 	return client
 }
 
+// WithUserAgent returns an Option that sets the User-Agent header for HTTP requests.
 func WithUserAgent(userAgent string) Option {
 	return func(c *Client) {
 		c.userAgent = userAgent
 	}
 }
 
+// WithProxy returns an Option that configures the client to use the specified proxy URL.
 func WithProxy(proxy url.URL) Option {
 	return func(c *Client) {
 		c.httpClient.Transport = &http.Transport{
@@ -69,6 +76,7 @@ func WithProxy(proxy url.URL) Option {
 	}
 }
 
+// WithTrace returns an Option that enables HTTP request and response logging for debugging.
 func WithTrace() Option {
 	return func(c *Client) {
 		prev := c.httpClient.Transport
@@ -81,10 +89,13 @@ func WithTrace() Option {
 	}
 }
 
+// errorResponse represents the error message returned by the DeepL API in JSON format.
 type errorResponse struct {
-	Message string `json:"message"`
+	Message string `json:"message"` // Human-readable error message
 }
 
+// sendRequest sends an HTTP request to the DeepL API and decodes the response into the provided value v.
+// It handles setting authorization headers and error handling for non-200 HTTP responses.
 func (c *Client) sendRequest(req *http.Request, v interface{}) (err error) {
 	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
 	req.Header.Set("Content-Type", "application/json")
@@ -127,6 +138,8 @@ func (c *Client) sendRequest(req *http.Request, v interface{}) (err error) {
 	return nil
 }
 
+// getBaseURL returns the appropriate API base URL based on the API key type.
+// Free API keys (ending with ":fx") use the free API endpoint.
 func getBaseURL(apiKey string) string {
 	if strings.HasSuffix(apiKey, ":fx") {
 		return baseURLFree
@@ -134,6 +147,7 @@ func getBaseURL(apiKey string) string {
 	return baseURL
 }
 
+// getErrorMessage retrieves a predefined error message for a given HTTP status code, if available.
 func getErrorMessage(status int) (bool, string) {
 	if msg, found := httpErrorMessages[status]; found {
 		return found, msg
@@ -141,10 +155,13 @@ func getErrorMessage(status int) (bool, string) {
 	return false, ""
 }
 
+// loggingRoundTripper is an http.RoundTripper that logs HTTP requests and responses.
 type loggingRoundTripper struct {
 	Proxied http.RoundTripper
 }
 
+// RoundTrip implements the RoundTripper interface.
+// It logs the outgoing HTTP request and the incoming HTTP response for debugging.
 func (lrt *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	reqDump, err := httputil.DumpRequestOut(req, true)
 	if err != nil {
@@ -169,6 +186,7 @@ func (lrt *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	return res, nil
 }
 
+// BoolPtr is a helper function that returns a pointer to a bool value.
 func BoolPtr(b bool) *bool {
 	return &b
 }
