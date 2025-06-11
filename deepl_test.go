@@ -254,7 +254,7 @@ func TestSendRequestWithRetry_RetryOn429ThenSuccess(t *testing.T) {
 
 	var er errorResponse
 	start := time.Now()
-	err := client.sendRequestWithRetry(context.Background(), req, &er)
+	err := client.doRequest(context.Background(), req, &er)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -279,7 +279,7 @@ func TestSendRequestWithRetry_ExceedsMaxRetries(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "https://api.deepl.com/some-endpoint", nil)
 	var er errorResponse
 
-	err := client.sendRequestWithRetry(context.Background(), req, &er)
+	err := client.doRequest(context.Background(), req, &er)
 
 	if err == nil {
 		t.Fatalf("expected error after retries exceeded, got nil")
@@ -303,7 +303,7 @@ func TestSendRequestWithRetry_DoNotRetryOnOtherError(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
 	var er errorResponse
 
-	err := client.sendRequestWithRetry(context.Background(), req, &er)
+	err := client.doRequest(context.Background(), req, &er)
 	if err == nil {
 		t.Fatalf("expected error on 400 response")
 	}
@@ -329,7 +329,7 @@ func TestSendRequestWithRetry_ContextCancel(t *testing.T) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.deepl.com/some-endpoint", nil)
 	var er errorResponse
 
-	err := client.sendRequestWithRetry(ctx, req, &er)
+	err := client.doRequest(ctx, req, &er)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled error due to cancellation, got: %v", err)
 	}

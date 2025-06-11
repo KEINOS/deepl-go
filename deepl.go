@@ -24,13 +24,15 @@ const (
 )
 
 type retryPolicy struct {
-	MaxRetries int
-	MaxDelay   time.Duration
+	MaxRetries  int
+	MaxDelay    time.Duration
+	BackoffBase time.Duration
 }
 
 var defaultRetryPolicy = retryPolicy{
-	MaxRetries: 5,
-	MaxDelay:   10 * time.Second,
+	MaxRetries:  5,
+	MaxDelay:    10 * time.Second,
+	BackoffBase: 500 * time.Millisecond,
 }
 
 // httpErrorMessages maps HTTP status codes to human-readable error messages.
@@ -65,7 +67,7 @@ func NewClient(apiKey string, opts ...func(c *Client)) *Client {
 	client := &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		baseURL:     getBaseURL(apiKey),
 		userAgent:   "deepl-go/" + version,
@@ -121,66 +123,115 @@ type errorResponse struct {
 	Message string `json:"message"` // Human-readable error message
 }
 
-// sendRequestWithRetry wraps sendRequest adding retry logic for 429 and 503 errors.
-func (c *Client) sendRequestWithRetry(ctx context.Context, req *http.Request, v interface{}) error {
-	var lastErr error
-	backoff := 500 * time.Millisecond // initial backoff
+func (c *Client) doRequest(ctx context.Context, req *http.Request, v interface{}) error {
+	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
+	req.Header.Set("Content-Type", "application/json")
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
 
-	for attempt := 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
-		clonedReq, err := cloneRequest(req)
+	var resp *http.Response
+	var respErr error
+	for attempt := 0; attempt < c.retryPolicy.MaxRetries; attempt++ {
+		cloneReq, err := cloneRequest(req)
 		if err != nil {
 			return fmt.Errorf("failed to clone request: %w", err)
 		}
 
-		err = c.sendRequest(clonedReq, v)
-		if err == nil {
-			return nil
-		}
-
-		if !c.shouldRetry(err) {
-			return err
-		}
-
-		lastErr = err
-
-		// If last attempt, break
-		if attempt == c.retryPolicy.MaxRetries {
+		resp, respErr = c.httpClient.Do(cloneReq.WithContext(ctx))
+		shouldRetry, delay := c.shouldRetry(resp, respErr, attempt)
+		if !shouldRetry {
 			break
 		}
-
-		// Calculate delay with binary exponential backoff + jitter
-		delay := c.calculateRetryDelay(attempt, backoff)
-
 		select {
 		case <-time.After(delay):
-			backoff = delay // update backoff to last used delay before next retry
+			continue
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 		}
 	}
+	if resp.StatusCode != http.StatusOK {
+		errorMsg := "unknown error"
+		if found, message := getErrorMessage(resp.StatusCode); found {
+			errorMsg = message
+		}
+		var errRes errorResponse
+		errDecode := json.NewDecoder(resp.Body).Decode(&errRes)
+		if errDecode == nil && errRes.Message != "" {
+			errorMsg = fmt.Sprintf(
+				"HTTP %d: %s --> %s",
+				resp.StatusCode,
+				errorMsg,
+				errRes.Message,
+			)
+		}
+		return fmt.Errorf(errorMsg)
+	}
 
-	return fmt.Errorf("after %d retries: %w", c.retryPolicy.MaxRetries, lastErr)
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return err
+	}
+	return nil
 }
+
+// sendRequestWithRetry wraps sendRequest adding retry logic for 429 and 503 errors.
+//func (c *Client) sendRequestWithRetry(ctx context.Context, req *http.Request, v interface{}) error {
+//	var lastErr error
+//	backoff := 500 * time.Millisecond // initial backoff
+//
+//	for attempt := 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
+//		clonedReq, err := cloneRequest(req)
+//		if err != nil {
+//			return fmt.Errorf("failed to clone request: %w", err)
+//		}
+//
+//		err = c.sendRequest(clonedReq, v)
+//		if err == nil {
+//			return nil
+//		}
+//
+//		if !c.shouldRetry(err) {
+//			return err
+//		}
+//
+//		lastErr = err
+//
+//		// If last attempt, break
+//		if attempt == c.retryPolicy.MaxRetries {
+//			break
+//		}
+//
+//		// Calculate delay with binary exponential backoff + jitter
+//		delay := c.calculateRetryDelay(attempt, backoff)
+//
+//		select {
+//		case <-time.After(delay):
+//			backoff = delay // update backoff to last used delay before next retry
+//		case <-ctx.Done():
+//			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+//		}
+//	}
+//
+//	return fmt.Errorf("after %d retries: %w", c.retryPolicy.MaxRetries, lastErr)
+//}
 
 // shouldRetry examines the error message and returns true if it's retryable
-func (c *Client) shouldRetry(err error) bool {
-	if err == nil {
-		return false
+func (c *Client) shouldRetry(resp *http.Response, err error, attempt int) (shouldRetry bool, delay time.Duration) {
+	if err != nil || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		fmt.Println(resp.StatusCode)
+		return true, calculateRetryDelay(attempt, c.retryPolicy)
 	}
-	s := err.Error()
-	return strings.Contains(s, "HTTP 429") || strings.Contains(s, "HTTP 503")
+	return false, 0
 }
 
-// calculateRetryDelay uses binary exponential backoff with jitter
-func (c *Client) calculateRetryDelay(attempt int, prevBackoff time.Duration) time.Duration {
-	// Calculate exponential delay: 2^attempt * base, capped at max delay
-	exp := time.Duration(math.Pow(2, float64(attempt))) * prevBackoff
-	if exp > c.retryPolicy.MaxDelay {
-		exp = c.retryPolicy.MaxDelay
+// calculateRetryDelay returns a randomized backoff duration with exponential growth capped at maxDelay.
+func calculateRetryDelay(attempt int, policy retryPolicy) time.Duration {
+	expDelay := time.Duration(math.Pow(2, float64(attempt))) * policy.BackoffBase
+	if expDelay > policy.MaxDelay {
+		expDelay = policy.MaxDelay
 	}
-
-	// Jitter: random delay between 0 and exp
-	return time.Duration(rand.Int63n(int64(exp) + 1))
+	// jitter between 0 and expDelay
+	return time.Duration(rand.Int63n(int64(expDelay) + 1))
 }
 
 // cloneRequest creates a deep copy of the *http.Request including the body.
