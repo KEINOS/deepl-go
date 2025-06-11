@@ -120,7 +120,7 @@ func TestSendRequest(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
 	var resp testResponse
 
-	err := client.sendRequest(req, &resp)
+	err := client.doRequest(context.Background(), req, &resp)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,13 +136,13 @@ func TestSendRequestWithErrorStatus(t *testing.T) {
 		responseBody  string
 		expectedError string
 	}{
-		{400, "", "Bad request"},
-		{403, "", "Authorization failed"},
-		{404, "", "resource could not be found"},
-		{429, "", "Too many requests"},
-		{456, "", "Quota exceeded"},
-		{500, "", "Internal server error"},
-		{503, "", "Resource currently unavailable"},
+		{400, "", "bad request"},
+		{403, "", "forbidden"},
+		{404, "", "not found"},
+		{429, "", "too many requests"},
+		{456, "", "character limit has been reached"},
+		{500, "", "internal server error"},
+		{503, "", "service unavailable"},
 		{499, `{"message":"Custom error"}`, "Custom error"},
 		{499, "Invalid JSON", "unknown error"},
 	}
@@ -167,7 +167,7 @@ func TestSendRequestWithErrorStatus(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, "https://api.deepl.com/some-endpoint", nil)
 			var resp interface{}
 
-			err := client.sendRequest(req, &resp)
+			err := client.doRequest(context.Background(), req, &resp)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -191,7 +191,7 @@ func TestSendRequestWithJSONDecodeError(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
 	var resp interface{}
 
-	err := client.sendRequest(req, &resp)
+	err := client.doRequest(context.Background(), req, &resp)
 	if err == nil {
 		t.Fatal("expected JSON decode error, got nil")
 	}
@@ -210,31 +210,6 @@ func TestGetBaseURL(t *testing.T) {
 		u := getBaseURL(tc.apiKey)
 		if u != tc.expectedURL {
 			t.Errorf("getBaseURL(%q) = %q, expected %q", tc.apiKey, u, tc.expectedURL)
-		}
-	}
-}
-
-func TestGetErrorMessage(t *testing.T) {
-	testCases := []struct {
-		statusCode     int
-		expectedFound  bool
-		expectedPrefix string
-	}{
-		{400, true, "Bad request"},
-		{403, true, "Authorization failed"},
-		{404, true, "The requested resource"},
-		{999, false, ""},
-	}
-
-	for _, tc := range testCases {
-		found, message := getErrorMessage(tc.statusCode)
-
-		if found != tc.expectedFound {
-			t.Errorf("getErrorMessage(%d) found = %v, expected %v", tc.statusCode, found, tc.expectedFound)
-		}
-
-		if tc.expectedFound && !strings.HasPrefix(message, tc.expectedPrefix) {
-			t.Errorf("getErrorMessage(%d) message = %q, expected prefix %q", tc.statusCode, message, tc.expectedPrefix)
 		}
 	}
 }
@@ -284,9 +259,6 @@ func TestSendRequestWithRetry_ExceedsMaxRetries(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error after retries exceeded, got nil")
 	}
-	if !strings.Contains(err.Error(), "after 2 retries") {
-		t.Errorf("unexpected error message: %v", err)
-	}
 	if attempt != 3 {
 		t.Errorf("expected 3 attempts (initial + 2 retries), got %d", attempt)
 	}
@@ -316,6 +288,7 @@ func TestSendRequestWithRetry_ContextCancel(t *testing.T) {
 	attempt := 0
 	client := NewTestClient(func(req *http.Request) *http.Response {
 		attempt++
+		time.Sleep(50 * time.Millisecond)
 		return MockResponse(503, map[string]string{"message": "service unavailable"})
 	})
 	client.retryPolicy = retryPolicy{MaxRetries: 3, MaxDelay: time.Second}

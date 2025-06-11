@@ -39,7 +39,7 @@ func (c *Client) GetUsageWithContext(ctx context.Context) (*Usage, error) {
 
 	var res Usage
 
-	if err := c.sendRequest(req, &res); err != nil {
+	if err := c.doRequest(ctx, req, &res); err != nil {
 		return nil, err
 	}
 
