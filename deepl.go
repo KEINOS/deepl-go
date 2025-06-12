@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,31 +19,19 @@ import (
 const (
 	baseURL     = "https://api.deepl.com"
 	baseURLFree = "https://api-free.deepl.com"
-	version     = "0.2.0"
+	version     = "0.2.1"
 )
 
 type retryPolicy struct {
-	MaxRetries int
-	MaxDelay   time.Duration
+	MaxRetries  int
+	MaxDelay    time.Duration
+	BackoffBase time.Duration
 }
 
 var defaultRetryPolicy = retryPolicy{
-	MaxRetries: 5,
-	MaxDelay:   10 * time.Second,
-}
-
-// httpErrorMessages maps HTTP status codes to human-readable error messages.
-var httpErrorMessages = map[int]string{
-	400: "Bad request. Please check error message and your parameters.",
-	403: "Authorization failed. Please supply a valid auth_key parameter.",
-	404: "The requested resource could not be found.",
-	413: "The request size exceeds the limit.",
-	414: "The request URL is too long. You can avoid this error by using a POST request instead of a GET request, and sending the parameters in the HTTP body.",
-	429: "Too many requests. Please wait and resend your request.",
-	456: "Quota exceeded. The character limit has been reached.",
-	500: "Internal server error.",
-	503: "Resource currently unavailable. Try again later.",
-	529: "Too many requests. Please wait and resend your request.",
+	MaxRetries:  5,
+	MaxDelay:    10 * time.Second,
+	BackoffBase: 500 * time.Millisecond,
 }
 
 // Client represents a DeepL API client.
@@ -61,11 +48,11 @@ type Option func(c *Client)
 
 // NewClient creates and returns a new DeepL API client with the given API key and optional configurations.
 // If options are provided, they will be applied to the client.
-func NewClient(apiKey string, opts ...func(c *Client)) *Client {
+func NewClient(apiKey string, opts ...Option) *Client {
 	client := &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		baseURL:     getBaseURL(apiKey),
 		userAgent:   "deepl-go/" + version,
@@ -116,71 +103,111 @@ func WithTrace() Option {
 	}
 }
 
+// doRequest sends an HTTP request using the client's configuration, applies authentication and content headers,
+// performs the request with retry logic, and decodes the JSON response body into the provided interface.
+// It returns any error encountered during the request or decoding process.
+func (c *Client) doRequest(ctx context.Context, req *http.Request, v interface{}) error {
+	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
+	req.Header.Set("Content-Type", "application/json")
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
+
+	resp, respErr := c.performRetryableRequest(ctx, req)
+
+	if respErr != nil {
+		return respErr
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return err
+	}
+	return nil
+}
+
+// performRetryableRequest executes an HTTP request with retry logic based on the client's retry policy.
+func (c *Client) performRetryableRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
+	var resp *http.Response
+	var respErr error
+
+	for attempt := 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
+		cloneReq, err := cloneRequest(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to clone request: %w", err)
+		}
+
+		cloneReq = cloneReq.WithContext(ctx)
+		resp, respErr = c.httpClient.Do(cloneReq)
+		shouldRetry, delay := c.shouldRetry(resp, respErr, attempt)
+		if !shouldRetry {
+			break
+		}
+
+		select {
+		case <-time.After(delay):
+			continue // continue to next attempt
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+		}
+	}
+
+	if respErr != nil {
+		return nil, respErr
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, createErrorFromResponse(resp)
+	}
+
+	return resp, nil
+}
+
 // errorResponse represents the error message returned by the DeepL API in JSON format.
 type errorResponse struct {
 	Message string `json:"message"` // Human-readable error message
 }
 
-// sendRequestWithRetry wraps sendRequest adding retry logic for 429 and 503 errors.
-func (c *Client) sendRequestWithRetry(ctx context.Context, req *http.Request, v interface{}) error {
-	var lastErr error
-	backoff := 500 * time.Millisecond // initial backoff
-
-	for attempt := 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
-		clonedReq, err := cloneRequest(req)
-		if err != nil {
-			return fmt.Errorf("failed to clone request: %w", err)
-		}
-
-		err = c.sendRequest(clonedReq, v)
-		if err == nil {
-			return nil
-		}
-
-		if !c.shouldRetry(err) {
-			return err
-		}
-
-		lastErr = err
-
-		// If last attempt, break
-		if attempt == c.retryPolicy.MaxRetries {
-			break
-		}
-
-		// Calculate delay with binary exponential backoff + jitter
-		delay := c.calculateRetryDelay(attempt, backoff)
-
-		select {
-		case <-time.After(delay):
-			backoff = delay // update backoff to last used delay before next retry
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
-		}
+func createErrorFromResponse(resp *http.Response) error {
+	defer func() { _ = resp.Body.Close() }()
+	statusText := "unknown error"
+	if resp.StatusCode == 456 {
+		statusText = "character limit has been reached"
+	} else if http.StatusText(resp.StatusCode) != "" {
+		statusText = strings.ToLower(http.StatusText(resp.StatusCode))
 	}
 
-	return fmt.Errorf("after %d retries: %w", c.retryPolicy.MaxRetries, lastErr)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("HTTP %d %s; error reading the body: %w", resp.StatusCode, statusText, err)
+	}
+
+	var errResp errorResponse
+	err = json.NewDecoder(bytes.NewReader(bodyBytes)).Decode(&errResp)
+	if err == nil && errResp.Message != "" {
+		return fmt.Errorf("HTTP %d %s: %s", resp.StatusCode, statusText, errResp.Message)
+	}
+
+	return fmt.Errorf("HTTP %d %s", resp.StatusCode, statusText)
 }
 
 // shouldRetry examines the error message and returns true if it's retryable
-func (c *Client) shouldRetry(err error) bool {
-	if err == nil {
-		return false
+func (c *Client) shouldRetry(resp *http.Response, err error, attempt int) (shouldRetry bool, delay time.Duration) {
+	if err != nil || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		return true, calculateRetryDelay(attempt, c.retryPolicy)
 	}
-	s := err.Error()
-	return strings.Contains(s, "HTTP 429") || strings.Contains(s, "HTTP 503")
+	return false, 0
 }
 
-// calculateRetryDelay uses binary exponential backoff with jitter
-func (c *Client) calculateRetryDelay(attempt int, prevBackoff time.Duration) time.Duration {
-	// Calculate exponential delay: 2^attempt * base, capped at max delay
-	exp := time.Duration(math.Pow(2, float64(attempt))) * prevBackoff
-	if exp > c.retryPolicy.MaxDelay {
-		exp = c.retryPolicy.MaxDelay
+// calculateRetryDelay returns a randomized backoff duration with exponential growth capped at maxDelay.
+func calculateRetryDelay(attempt int, policy retryPolicy) time.Duration {
+	expDelay := time.Duration(math.Pow(2, float64(attempt))) * policy.BackoffBase
+	if expDelay > policy.MaxDelay {
+		expDelay = policy.MaxDelay
 	}
-
-	// Jitter: random delay between 0 and exp
-	return time.Duration(rand.Int63n(int64(exp) + 1))
+	// jitter between 0 and expDelay
+	return time.Duration(rand.Int63n(int64(expDelay) + 1))
 }
 
 // cloneRequest creates a deep copy of the *http.Request including the body.
@@ -195,54 +222,11 @@ func cloneRequest(req *http.Request) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+	_ = req.Body.Close()
 	// Reset the original body for potential reuse
 	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	cloned.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	return cloned, nil
-}
-
-// sendRequest sends an HTTP request to the DeepL API and decodes the response into the provided value v.
-// It handles setting authorization headers and error handling for non-200 HTTP responses.
-func (c *Client) sendRequest(req *http.Request, v interface{}) (err error) {
-	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
-	req.Header.Set("Content-Type", "application/json")
-	if c.userAgent != "" {
-		req.Header.Set("User-Agent", c.userAgent)
-	}
-
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if closeErr := res.Body.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-
-	if res.StatusCode != http.StatusOK {
-		errorMsg := "unknown error"
-		if found, message := getErrorMessage(res.StatusCode); found {
-			errorMsg = message
-		}
-		var errRes errorResponse
-		errDecode := json.NewDecoder(res.Body).Decode(&errRes)
-		if errDecode == nil && errRes.Message != "" {
-			errorMsg = fmt.Sprintf(
-				"HTTP %d: %s --> %s",
-				res.StatusCode,
-				errorMsg,
-				errRes.Message,
-			)
-		}
-		return fmt.Errorf(errorMsg)
-	}
-
-	if err = json.NewDecoder(res.Body).Decode(&v); err != nil {
-		return err
-	}
-	return nil
 }
 
 // getBaseURL returns the appropriate API base URL based on the API key type.
@@ -252,14 +236,6 @@ func getBaseURL(apiKey string) string {
 		return baseURLFree
 	}
 	return baseURL
-}
-
-// getErrorMessage retrieves a predefined error message for a given HTTP status code, if available.
-func getErrorMessage(status int) (bool, string) {
-	if msg, found := httpErrorMessages[status]; found {
-		return found, msg
-	}
-	return false, ""
 }
 
 // loggingRoundTripper is an http.RoundTripper that logs HTTP requests and responses.

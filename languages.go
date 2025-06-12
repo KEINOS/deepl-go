@@ -49,7 +49,7 @@ func (c *Client) getLanguages(ctx context.Context, v url.Values) ([]*Language, e
 	var languages []*Language
 
 	// Send the request and decode the response JSON into languages slice.
-	if err := c.sendRequest(req, &languages); err != nil {
+	if err := c.doRequest(ctx, req, &languages); err != nil {
 		return nil, err
 	}
 	return languages, nil

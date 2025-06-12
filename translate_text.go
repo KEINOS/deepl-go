@@ -75,7 +75,7 @@ func (c *Client) TranslateTextWithOptions(ctx context.Context, opts TranslateTex
 		return nil, err
 	}
 	var response TranslationsResponse
-	if err := c.sendRequest(req, &response); err != nil {
+	if err := c.doRequest(ctx, req, &response); err != nil {
 		return nil, err
 	}
 	return response.Translations, nil
