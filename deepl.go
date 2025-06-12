@@ -19,7 +19,7 @@ import (
 const (
 	baseURL     = "https://api.deepl.com"
 	baseURLFree = "https://api-free.deepl.com"
-	version     = "0.2.0"
+	version     = "0.2.1"
 )
 
 type retryPolicy struct {
@@ -48,7 +48,7 @@ type Option func(c *Client)
 
 // NewClient creates and returns a new DeepL API client with the given API key and optional configurations.
 // If options are provided, they will be applied to the client.
-func NewClient(apiKey string, opts ...func(c *Client)) *Client {
+func NewClient(apiKey string, opts ...Option) *Client {
 	client := &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
@@ -103,6 +103,9 @@ func WithTrace() Option {
 	}
 }
 
+// doRequest sends an HTTP request using the client's configuration, applies authentication and content headers,
+// performs the request with retry logic, and decodes the JSON response body into the provided interface.
+// It returns any error encountered during the request or decoding process.
 func (c *Client) doRequest(ctx context.Context, req *http.Request, v interface{}) error {
 	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
 	req.Header.Set("Content-Type", "application/json")
@@ -116,7 +119,9 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request, v interface{}
 		return respErr
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 		return err
 	}
 	return nil
@@ -126,9 +131,8 @@ func (c *Client) doRequest(ctx context.Context, req *http.Request, v interface{}
 func (c *Client) performRetryableRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var respErr error
-	var attempt int
 
-	for attempt = 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= c.retryPolicy.MaxRetries; attempt++ {
 		cloneReq, err := cloneRequest(req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to clone request: %w", err)
@@ -143,7 +147,7 @@ func (c *Client) performRetryableRequest(ctx context.Context, req *http.Request)
 
 		select {
 		case <-time.After(delay):
-			continue
+			continue // continue to next attempt
 		case <-ctx.Done():
 			return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
 		}
