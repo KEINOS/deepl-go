@@ -106,7 +106,7 @@ func WithTrace() Option {
 // doRequest sends an HTTP request using the client's configuration, applies authentication and content headers,
 // performs the request with retry logic, and decodes the JSON response body into the provided interface.
 // It returns any error encountered during the request or decoding process.
-func (c *Client) doRequest(ctx context.Context, req *http.Request, v interface{}) error {
+func (c *Client) doRequest(ctx context.Context, req *http.Request, v any) error {
 	req.Header.Set("Authorization", fmt.Sprintf("DeepL-Auth-Key %s", c.apiKey))
 	req.Header.Set("Content-Type", "application/json")
 	if c.userAgent != "" {
@@ -169,6 +169,7 @@ type errorResponse struct {
 	Message string `json:"message"` // Human-readable error message
 }
 
+// createErrorFromResponse generates an error describing the HTTP response including status and message if available.
 func createErrorFromResponse(resp *http.Response) error {
 	defer func() { _ = resp.Body.Close() }()
 	statusText := "unknown error"

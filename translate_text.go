@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -57,7 +58,7 @@ func (c *Client) TranslateTextWithContext(ctx context.Context, text, targetLangu
 		return nil, err
 	}
 	if len(translations) == 0 {
-		return nil, fmt.Errorf("no translation returned")
+		return nil, errors.New("no translation returned")
 	}
 	return translations[0], nil
 }
