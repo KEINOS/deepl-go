@@ -3,7 +3,9 @@
 [![deepl-go][repo_logo_img]][repo_url]
 
 # deepl-go
+
 [![Go Reference][go_reference_badge]][go_reference_url]
+[![Tests][tests_badge]][tests_url]
 [![Go Report Card][report_card_badge]][report_card_url]
 [![Lisence: MIT][license_badge]][license_url]
 
@@ -75,6 +77,8 @@ This client library is not an official DeepL product. For official documentation
 [repo_logo_img]: https://raw.githubusercontent.com/lkretschmer/deepl-go/refs/heads/main/.github/logo.svg
 [go_reference_badge]: https://pkg.go.dev/badge/github.com/lkretschmer/deepl-go.svg
 [go_reference_url]: https://pkg.go.dev/github.com/lkretschmer/deepl-go
+[tests_badge]:https://github.com/lkretschmer/deepl-go/actions/workflows/go.yml/badge.svg
+[tests_url]: https://github.com/lkretschmer/deepl-go/actions/workflows/go.yml
 [report_card_badge]: https://goreportcard.com/badge/github.com/lkretschmer/deepl-go
 [report_card_url]: https://goreportcard.com/report/github.com/lkretschmer/deepl-go
 [license_badge]: https://img.shields.io/badge/license-MIT-blueviolet.svg
