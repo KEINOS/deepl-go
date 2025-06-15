@@ -15,7 +15,8 @@ import (
 type WritingStyle int8
 
 const (
-	WritingStyleAcademic WritingStyle = iota
+	WritingStyleUnset WritingStyle = iota
+	WritingStyleAcademic
 	WritingStyleBusiness
 	WritingStyleCasual
 	WritingStyleDefault
@@ -47,7 +48,8 @@ func (ws WritingStyle) MarshalJSON() ([]byte, error) {
 type WritingTone int8
 
 const (
-	WritingToneConfident WritingTone = iota
+	WritingToneUnset WritingTone = iota
+	WritingToneConfident
 	WritingToneDefault
 	WritingToneDiplomatic
 	WritingToneEnthusiastic
