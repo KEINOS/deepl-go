@@ -35,6 +35,12 @@ func (ws WritingStyle) String() string {
 	return styles[ws]
 }
 
+// MarshalJSON implements the json.Marshaler interface for WritingStyle.
+// It serializes the WritingStyle value as its string representation.
+func (ws WritingStyle) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ws.String())
+}
+
 // WritingTone specifies the desired tone for the text.
 // The `prefer_` prefix allows falling back to the default tone if the language
 // does not yet support specific tones.
@@ -62,16 +68,23 @@ func (wt WritingTone) String() string {
 	return tones[wt]
 }
 
+// MarshalJSON implements the json.Marshaler interface for WritingTone.
+// It serializes the WritingTone value as its string representation.
+func (wt WritingTone) MarshalJSON() ([]byte, error) {
+	return json.Marshal(wt.String())
+}
+
 // RephraseOptions represents the payload for the rephrase API call.
 // Text contains one or more strings to rephrase.
 // TargetLang is the target language code (optional).
-// WritingStyle specifies the desired style to adapt the text to audience and goals.
-// Tone specifies the desired tone for the output text.
+// WritingStyle specifies the desired style to adapt the text to audience and goals (optional).
+// WritingTone specifies the desired tone for the output text (optional).
+// Only one of WritingStyle or WritingTone can be set.
 type RephraseOptions struct {
 	Text         []string     `json:"text"`
-	TargetLang   string       `json:"target_lang"`
-	WritingStyle WritingStyle `json:"writing_style"`
-	Tone         WritingTone  `json:"tone"`
+	TargetLang   string       `json:"target_lang,omitempty"`
+	WritingStyle WritingStyle `json:"writing_style,omitempty"`
+	WritingTone  WritingTone  `json:"tone,omitempty"`
 }
 
 // Improvement contains a single rephrased result along with detected language info.
@@ -107,6 +120,9 @@ func (c *Client) RephraseWithContext(ctx context.Context, text string) (*Improve
 
 // RephraseWithOptions performs the rephrase request with complete options and returns improvements.
 func (c *Client) RephraseWithOptions(ctx context.Context, opts RephraseOptions) ([]*Improvement, error) {
+	if opts.WritingStyle != WritingStyle(0) && opts.WritingTone != WritingTone(0) {
+		return nil, errors.New("only one of WritingStyle or WritingTone can be set")
+	}
 	data, err := json.Marshal(opts)
 	if err != nil {
 		return nil, err
