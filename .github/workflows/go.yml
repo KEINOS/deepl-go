@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        go: ['stable', 'oldstable']
+        go: ['stable', '1.20.x']
 
     steps:
       - name: Check out code
