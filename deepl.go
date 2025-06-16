@@ -19,7 +19,7 @@ import (
 const (
 	baseURL     = "https://api.deepl.com"
 	baseURLFree = "https://api-free.deepl.com"
-	version     = "0.2.1"
+	version     = "0.3.0"
 )
 
 type retryPolicy struct {
