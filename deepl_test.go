@@ -31,7 +31,7 @@ func NewTestClient(fn RoundTripFunc) *Client {
 	}
 }
 
-func MockResponse(statusCode int, data interface{}) *http.Response {
+func MockResponse(statusCode int, data any) *http.Response {
 	var responseBody string
 
 	if data != nil {
@@ -165,7 +165,7 @@ func TestSendRequestWithErrorStatus(t *testing.T) {
 			})
 
 			req, _ := http.NewRequest(http.MethodPost, "https://api.deepl.com/some-endpoint", nil)
-			var resp interface{}
+			var resp any
 
 			err := client.doRequest(context.Background(), req, &resp)
 			if err == nil {
@@ -189,7 +189,7 @@ func TestSendRequestWithJSONDecodeError(t *testing.T) {
 	})
 
 	req, _ := http.NewRequest(http.MethodGet, "https://api.deepl.com/some-endpoint", nil)
-	var resp interface{}
+	var resp any
 
 	err := client.doRequest(context.Background(), req, &resp)
 	if err == nil {
