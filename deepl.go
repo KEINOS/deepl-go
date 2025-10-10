@@ -90,6 +90,14 @@ func WithRetryPolicy(maxRetryAttempts, maxDelaySeconds int) Option {
 	}
 }
 
+// WithBaseURL returns an Option that sets a custom base URL for the client.
+// This is particularly useful for testing with mock servers or using alternative API endpoints.
+func WithBaseURL(baseURL string) Option {
+	return func(c *Client) {
+		c.baseURL = baseURL
+	}
+}
+
 // WithTrace returns an Option that enables HTTP request and response logging for debugging.
 func WithTrace() Option {
 	return func(c *Client) {

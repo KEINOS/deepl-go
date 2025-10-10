@@ -82,6 +82,32 @@ func TestWithUserAgent(t *testing.T) {
 	}
 }
 
+func TestWithBaseURL(t *testing.T) {
+	customBaseURL := "http://localhost:8080"
+	client := NewClient("api-key", WithBaseURL(customBaseURL))
+
+	if client.baseURL != customBaseURL {
+		t.Errorf("expected baseURL '%s', got %s", customBaseURL, client.baseURL)
+	}
+}
+
+func TestWithBaseURL_OverridesDefaultBehavior(t *testing.T) {
+	// Test that WithBaseURL overrides the default API key based URL selection
+	customBaseURL := "https://custom-api.example.com"
+
+	// Free API key should normally use baseURLFree, but WithBaseURL should override it
+	freeKeyClient := NewClient("free-api-key:fx", WithBaseURL(customBaseURL))
+	if freeKeyClient.baseURL != customBaseURL {
+		t.Errorf("WithBaseURL should override free API key URL, expected '%s', got %s", customBaseURL, freeKeyClient.baseURL)
+	}
+
+	// Regular API key should normally use baseURL, but WithBaseURL should override it
+	regularKeyClient := NewClient("regular-api-key", WithBaseURL(customBaseURL))
+	if regularKeyClient.baseURL != customBaseURL {
+		t.Errorf("WithBaseURL should override regular API key URL, expected '%s', got %s", customBaseURL, regularKeyClient.baseURL)
+	}
+}
+
 func TestWithProxy(t *testing.T) {
 	proxyUrl, _ := url.Parse("http://localhost:8080")
 	client := NewClient("api-key", WithProxy(*proxyUrl))
