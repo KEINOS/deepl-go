@@ -4,40 +4,16 @@
 // End-to-End (E2E) tests for the DeepL Go client library.
 //
 // These tests use the DeepL Mock server (https://github.com/DeepLcom/deepl-mock)
-// to simulate real DeepL API interactions without requiring actual API credentials
-// or consuming API quota.
+// to simulate real DeepL API interactions without requiring actual API credentials.
 //
-// DOCKER COMPOSE WORKFLOW:
+// Requirements:
+//   - Docker
+//   - Docker Compose
 //
-// 1. Spawn the DeepL Mock server:
-//    docker compose up deepl-mock -d
-//
-//    This starts the mock server container in detached mode. The mock server
-//    provides the same API endpoints as the real DeepL API but with limited
-//    functionality suitable for testing (e.g., translates "Hello, world!" to "陽子ビーム").
-//
-// 2. Run the E2E test container and check exit status:
-//    docker compose run --rm deepl-test
-//    echo $?  # Should output "0" if all tests pass
-//
-//    The test container runs `go test -tags=e2e ./...` and exits with status 0
-//    on success or non-zero on failure. The --rm flag automatically removes
-//    the test container after execution.
-//
-// 3. Clean up all containers (including orphans):
-//    docker compose down --remove-orphans
-//
-//    This stops and removes all containers created by docker compose, including
-//    any orphaned containers from previous test runs.
-//
-// ONE-LINER FOR FULL WORKFLOW:
-//    docker compose up deepl-mock -d && \
-//    docker compose run --rm deepl-test && \
-//    echo "Tests passed!" || echo "Tests failed!" && \
-//    docker compose down --remove-orphans
-//
-// ALTERNATIVE: Direct Go test execution (requires mock server running):
-//    go test -tags=e2e -v ./...
+// Usage:
+//   docker compose up deepl-mock -d
+//   docker compose run --rm deepl-test
+//   docker compose down --remove-orphans
 
 package deepl
 
@@ -45,11 +21,9 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -58,21 +32,31 @@ const (
 
 	// Test timeouts
 	testTimeout = 30 * time.Second
+
+	// User agent for E2E tests
+	testUserAgent = "deepl-go-e2e-test"
+
+	// Default mock server URL for local development
+	// In Docker Compose, use DEEPL_SERVER_URL=http://deepl-mock:3000
+	defaultMockServerURL = "http://localhost:3000"
 )
 
-// getMockServerURL returns the mock server URL from environment variable or default
+// getMockServerURL returns the mock server URL from environment variable or default.
+// In Docker Compose environment, DEEPL_SERVER_URL should be set to http://deepl-mock:3000.
+// The default localhost URL is for local development when running mock server directly.
 func getMockServerURL() string {
 	if url := os.Getenv("DEEPL_SERVER_URL"); url != "" {
 		return url
 	}
-	return "http://localhost:3000"
+	return defaultMockServerURL
 }
 
-// WithBaseURL returns an Option that sets a custom base URL for the client
-func WithBaseURL(baseURL string) Option {
-	return func(c *Client) {
-		c.baseURL = baseURL
-	}
+// createTestClient creates a DeepL client configured for E2E testing
+func createTestClient(serverURL string) *Client {
+	return NewClient(mockAPIKey,
+		WithBaseURL(serverURL),
+		WithUserAgent(testUserAgent),
+	)
 }
 
 // waitForMockServer waits for the mock server to be ready
@@ -94,13 +78,15 @@ func waitForMockServer(t *testing.T, serverURL string) {
 		case <-ctx.Done():
 			t.Fatal("Mock server did not become ready in time")
 		case <-ticker.C:
-			req, err := http.NewRequestWithContext(ctx, "GET", serverURL+"/v2/usage?auth_key=smoke_test", nil)
-			require.NoError(t, err)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL+"/v2/usage?auth_key=smoke_test", nil)
+			if err != nil {
+				continue
+			}
 
-			req.Header.Set("User-Agent", "deepl-go-e2e-test")
+			req.Header.Set("User-Agent", testUserAgent)
 
 			resp, err := client.Do(req)
-			if err == nil && resp.StatusCode == 200 {
+			if err == nil && resp.StatusCode == http.StatusOK {
 				resp.Body.Close()
 				return
 			}
@@ -113,43 +99,46 @@ func waitForMockServer(t *testing.T, serverURL string) {
 
 func TestE2E_MockServerHealth(t *testing.T) {
 	serverURL := getMockServerURL()
-
-	// Wait for mock server to be ready
 	waitForMockServer(t, serverURL)
 
 	// Create HTTP client for direct API calls
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// Test health endpoint
-	req, err := http.NewRequest("GET", serverURL+"/v2/usage?auth_key=smoke_test", nil)
-	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodGet, serverURL+"/v2/usage?auth_key=smoke_test", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
 
-	req.Header.Set("User-Agent", "deepl-go-e2e-test")
+	req.Header.Set("User-Agent", testUserAgent)
 
 	resp, err := client.Do(req)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("failed to make request: %v", err)
+	}
 	defer resp.Body.Close()
 
-	assert.Equal(t, 200, resp.StatusCode, "Mock server should be healthy")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
 }
 
 func TestE2E_DeepLClient_GetUsage(t *testing.T) {
 	serverURL := getMockServerURL()
-
-	// Wait for mock server to be ready
 	waitForMockServer(t, serverURL)
 
 	// Create DeepL client with mock server URL
-	client := NewClient(mockAPIKey,
-		WithBaseURL(serverURL),
-		WithUserAgent("deepl-go-e2e-test"),
-	)
+	client := createTestClient(serverURL)
 
 	// Test GetUsage
 	usage, err := client.GetUsage()
-	require.NoError(t, err, "GetUsage should succeed with mock server")
+	if err != nil {
+		t.Fatalf("GetUsage should succeed with mock server, got error: %v", err)
+	}
 
-	assert.NotNil(t, usage, "Usage response should not be nil")
+	if usage == nil {
+		t.Fatal("Usage response should not be nil")
+	}
 
 	// Mock server should return some usage data
 	t.Logf("Usage response: CharacterCount=%d, CharacterLimit=%d",
@@ -158,51 +147,57 @@ func TestE2E_DeepLClient_GetUsage(t *testing.T) {
 
 func TestE2E_DeepLClient_TranslateText(t *testing.T) {
 	serverURL := getMockServerURL()
-
-	// Wait for mock server to be ready
 	waitForMockServer(t, serverURL)
 
 	// Create DeepL client with mock server URL
-	client := NewClient(mockAPIKey,
-		WithBaseURL(serverURL),
-		WithUserAgent("deepl-go-e2e-test"),
-	)
+	client := createTestClient(serverURL)
 
 	// Test TranslateText
 	text := "Hello, world!"
 	targetLang := "JA"
 
 	translation, err := client.TranslateText(text, targetLang)
-	require.NoError(t, err, "TranslateText should succeed with mock server")
+	if err != nil {
+		t.Fatalf("TranslateText should succeed with mock server, got error: %v", err)
+	}
 
-	assert.NotNil(t, translation, "Should return a translation")
-	assert.NotEmpty(t, translation.Text, "Translation text should not be empty")
-	assert.NotEmpty(t, translation.DetectedSourceLanguage, "Should detect source language")
+	if translation == nil {
+		t.Fatal("Should return a translation")
+	}
+	if translation.Text == "" {
+		t.Error("Translation text should not be empty")
+	}
+	if translation.DetectedSourceLanguage == "" {
+		t.Error("Should detect source language")
+	}
 
 	t.Logf("Translation: '%s' -> '%s'", text, translation.Text)
 }
 
 func TestE2E_DeepLClient_GetSupportedLanguages(t *testing.T) {
 	serverURL := getMockServerURL()
-
-	// Wait for mock server to be ready
 	waitForMockServer(t, serverURL)
 
 	// Create DeepL client with mock server URL
-	client := NewClient(mockAPIKey,
-		WithBaseURL(serverURL),
-		WithUserAgent("deepl-go-e2e-test"),
-	)
+	client := createTestClient(serverURL)
 
 	// Test GetSourceLanguages
 	sourceLangs, err := client.GetSourceLanguages()
-	require.NoError(t, err, "GetSourceLanguages should succeed")
-	assert.NotEmpty(t, sourceLangs, "Should return supported source languages")
+	if err != nil {
+		t.Fatalf("GetSourceLanguages should succeed, got error: %v", err)
+	}
+	if len(sourceLangs) == 0 {
+		t.Error("Should return supported source languages")
+	}
 
 	// Test GetTargetLanguages
 	targetLangs, err := client.GetTargetLanguages()
-	require.NoError(t, err, "GetTargetLanguages should succeed")
-	assert.NotEmpty(t, targetLangs, "Should return supported target languages")
+	if err != nil {
+		t.Fatalf("GetTargetLanguages should succeed, got error: %v", err)
+	}
+	if len(targetLangs) == 0 {
+		t.Error("Should return supported target languages")
+	}
 
 	t.Logf("Found %d source languages and %d target languages",
 		len(sourceLangs), len(targetLangs))
@@ -210,8 +205,6 @@ func TestE2E_DeepLClient_GetSupportedLanguages(t *testing.T) {
 
 func TestE2E_DeepLClient_ErrorHandling(t *testing.T) {
 	serverURL := getMockServerURL()
-
-	// Wait for mock server to be ready
 	waitForMockServer(t, serverURL)
 
 	// Test with various invalid scenarios
@@ -227,7 +220,7 @@ func TestE2E_DeepLClient_ErrorHandling(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := NewClient(tc.apiKey,
 				WithBaseURL(serverURL),
-				WithUserAgent("deepl-go-e2e-test"),
+				WithUserAgent(testUserAgent),
 			)
 
 			// Test with invalid API key - may or may not return error depending on mock server behavior
@@ -236,11 +229,15 @@ func TestE2E_DeepLClient_ErrorHandling(t *testing.T) {
 			// Log the result regardless
 			if err != nil {
 				t.Logf("API key '%s' returned error: %v", tc.apiKey, err)
-				assert.Contains(t, err.Error(), "HTTP", "Error should contain HTTP status information")
+				if !strings.Contains(err.Error(), "HTTP") {
+					t.Errorf("Error should contain HTTP status information, got: %v", err)
+				}
 			} else {
 				t.Logf("API key '%s' succeeded with usage: %+v", tc.apiKey, usage)
 				// Mock server may accept invalid keys for testing purposes
-				assert.NotNil(t, usage, "Usage response should not be nil")
+				if usage == nil {
+					t.Error("Usage response should not be nil")
+				}
 			}
 		})
 	}
@@ -254,19 +251,18 @@ func TestE2E_DeepLClient_WithProxy(t *testing.T) {
 	}
 
 	serverURL := getMockServerURL()
-
-	// Wait for mock server to be ready
 	waitForMockServer(t, serverURL)
 
 	// Note: This test would need proper proxy setup in the mock server
 	// For now, we just verify that the proxy option doesn't break the client
-	client := NewClient(mockAPIKey,
-		WithBaseURL(serverURL),
-		WithUserAgent("deepl-go-e2e-test"),
-	)
+	client := createTestClient(serverURL)
 
 	// Basic functionality test with proxy configuration
 	usage, err := client.GetUsage()
-	require.NoError(t, err, "Should work even with proxy option configured")
-	assert.NotNil(t, usage, "Usage response should not be nil")
+	if err != nil {
+		t.Fatalf("Should work even with proxy option configured, got error: %v", err)
+	}
+	if usage == nil {
+		t.Fatal("Usage response should not be nil")
+	}
 }
