@@ -2,6 +2,7 @@
 // +build e2e
 
 // End-to-End (E2E) tests for the DeepL Go client library.
+// (See: https://github.com/lkretschmer/deepl-go/issues/4 )
 //
 // These tests use the DeepL Mock server (https://github.com/DeepLcom/deepl-mock)
 // to simulate real DeepL API interactions without requiring actual API credentials.
