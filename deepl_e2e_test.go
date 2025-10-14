@@ -29,6 +29,7 @@ import (
 
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -267,18 +268,31 @@ func TestE2E_DeepLClient_WithProxy(t *testing.T) {
 	proxyURL := getMockServerProxyURL()
 	waitForMockServer(t, serverURL)
 
-	// Note: This test would need proper proxy setup in the mock server
-	// For now, we just verify that the proxy option doesn't break the client
-	client := createTestClient(serverURL)
+	// Parse proxy URL
+	parsedProxyURL, err := url.Parse(proxyURL)
+	if err != nil {
+		t.Fatalf("Failed to parse proxy URL: %v", err)
+	}
 
-	t.Logf("Testing with proxy URL: %s", proxyURL)
+	// Create client configured to use proxy
+	client := deepl.NewClient(mockAPIKey,
+		deepl.WithBaseURL(serverURL),
+		deepl.WithUserAgent(testUserAgent),
+		deepl.WithProxy(*parsedProxyURL),
+	)
 
-	// Basic functionality test with proxy configuration
+	// Test that requests work through the proxy
+	// The mock server's proxy at port 3001 will forward requests to port 3000
 	usage, err := client.GetUsage()
 	if err != nil {
-		t.Fatalf("Should work even with proxy option configured, got error: %v", err)
+		t.Fatalf("GetUsage through proxy should succeed, got error: %v", err)
 	}
+
 	if usage == nil {
 		t.Fatal("Usage response should not be nil")
 	}
+
+	t.Logf("Successfully tested proxy: requests routed through %s", proxyURL)
+	t.Logf("Usage response: CharacterCount=%d, CharacterLimit=%d",
+		usage.CharacterCount, usage.CharacterLimit)
 }
