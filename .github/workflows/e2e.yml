@@ -18,11 +18,10 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v5
 
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: 'stable'
-          check-latest: true
+      - name: Pull and Build Docker Images
+        run: |
+          docker compose pull
+          docker compose build
 
       - name: Start DeepL Mock Server
         run: docker compose up deepl-mock -d
