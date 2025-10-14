@@ -1,8 +1,7 @@
 //go:build e2e
 // +build e2e
 
-// End-to-End (E2E) tests for the DeepL Go client library.
-// (See: https://github.com/lkretschmer/deepl-go/issues/4 )
+// End-to-End (E2E) tests for the DeepL Go client library (See Issue #4).
 //
 // These tests use the DeepL Mock server (https://github.com/DeepLcom/deepl-mock)
 // to simulate real DeepL API interactions without requiring actual API credentials.
@@ -11,14 +10,23 @@
 //   - Docker
 //   - Docker Compose
 //
-// Usage:
-//   docker compose up deepl-mock -d
-//   docker compose run --rm deepl-test
-//   docker compose down --remove-orphans
+// How to run the tests (both E2E and usual unit tests):
+//
+//	$ docker compose up deepl-mock -d
+//	$ docker compose run --rm deepl-test
+//	$ docker compose down --remove-orphans
+//
+// Local Development Alternative (spawn only mock server and run tests manually):
+//
+//	$ docker compose up deepl-mock -d
+//	$ go test --tags=e2e -v ./...
+//	$ docker compose down --remove-orphans
 
-package deepl
+package deepl_test
 
 import (
+	"github.com/lkretschmer/deepl-go"
+
 	"context"
 	"net/http"
 	"os"
@@ -28,18 +36,18 @@ import (
 )
 
 const (
-	// Mock server test credentials
+	// Dummy API key (API key is ignored by mock server)
 	mockAPIKey = "mock-api-key"
-
 	// Test timeouts
 	testTimeout = 30 * time.Second
-
 	// User agent for E2E tests
 	testUserAgent = "deepl-go-e2e-test"
-
 	// Default mock server URL for local development
-	// In Docker Compose, use DEEPL_SERVER_URL=http://deepl-mock:3000
+	// In Docker Compose, uses DEEPL_SERVER_URL=http://deepl-mock:3000
 	defaultMockServerURL = "http://localhost:3000"
+	// Default mock server proxy URL for local development
+	// In Docker Compose, uses DEEPL_PROXY_URL=http://deepl-mock:3001
+	defaultMockServerProxyURL = "http://localhost:3001"
 )
 
 // getMockServerURL returns the mock server URL from environment variable or default.
@@ -52,11 +60,21 @@ func getMockServerURL() string {
 	return defaultMockServerURL
 }
 
+// getMockServerProxyURL returns the mock server proxy URL from environment variable or default.
+// In Docker Compose environment, DEEPL_PROXY_URL should be set to http://deepl-mock:3001.
+// The default localhost URL is for local development when running mock server directly.
+func getMockServerProxyURL() string {
+	if url := os.Getenv("DEEPL_PROXY_URL"); url != "" {
+		return url
+	}
+	return defaultMockServerProxyURL
+}
+
 // createTestClient creates a DeepL client configured for E2E testing
-func createTestClient(serverURL string) *Client {
-	return NewClient(mockAPIKey,
-		WithBaseURL(serverURL),
-		WithUserAgent(testUserAgent),
+func createTestClient(serverURL string) *deepl.Client {
+	return deepl.NewClient(mockAPIKey,
+		deepl.WithBaseURL(serverURL),
+		deepl.WithUserAgent(testUserAgent),
 	)
 }
 
@@ -219,9 +237,9 @@ func TestE2E_DeepLClient_ErrorHandling(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			client := NewClient(tc.apiKey,
-				WithBaseURL(serverURL),
-				WithUserAgent(testUserAgent),
+			client := deepl.NewClient(tc.apiKey,
+				deepl.WithBaseURL(serverURL),
+				deepl.WithUserAgent(testUserAgent),
 			)
 
 			// Test with invalid API key - may or may not return error depending on mock server behavior
@@ -245,18 +263,15 @@ func TestE2E_DeepLClient_ErrorHandling(t *testing.T) {
 }
 
 func TestE2E_DeepLClient_WithProxy(t *testing.T) {
-	// Skip this test if proxy URL is not configured
-	proxyURL := os.Getenv("DEEPL_PROXY_URL")
-	if proxyURL == "" {
-		t.Skip("DEEPL_PROXY_URL not set, skipping proxy test")
-	}
-
 	serverURL := getMockServerURL()
+	proxyURL := getMockServerProxyURL()
 	waitForMockServer(t, serverURL)
 
 	// Note: This test would need proper proxy setup in the mock server
 	// For now, we just verify that the proxy option doesn't break the client
 	client := createTestClient(serverURL)
+
+	t.Logf("Testing with proxy URL: %s", proxyURL)
 
 	// Basic functionality test with proxy configuration
 	usage, err := client.GetUsage()
