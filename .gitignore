@@ -17,3 +17,6 @@
 # IDE
 .idea
 test/
+
+# Coverage
+coverage.txt

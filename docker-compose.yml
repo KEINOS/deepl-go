@@ -1,0 +1,27 @@
+services:
+  deepl-mock:
+    build: https://github.com/DeepLcom/deepl-mock.git
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    container_name: deepl-mock
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/v2/usage?auth_key=smoke_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  deepl-test:
+    image: golang:alpine
+    working_dir: /src
+    volumes:
+      - "./:/src"
+    environment:
+      - CGO_ENABLED=0
+      - DEEPL_SERVER_URL=http://deepl-mock:3000
+      - DEEPL_PROXY_URL=http://deepl-mock:3001
+    depends_on:
+      deepl-mock:
+        condition: service_healthy
+    command: go test -tags=e2e -v ./...

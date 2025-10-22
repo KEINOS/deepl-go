@@ -1,4 +1,4 @@
-<div align="center">
+<!-- markdownlint-disable MD041 MD033 --><div align="center">
 
 [![deepl-go][repo_logo_img]][repo_url]
 
@@ -10,6 +10,7 @@
 [![Lisence: MIT][license_badge]][license_url]
 
 `deepl-go` is an unofficial Go client library for the [DeepL translation API][deepl_api_docs]. It enables developers to integrate DeepL's powerful translation services into their Go applications effortlessly.
+
 </div>
 
 ---
@@ -46,12 +47,17 @@ go get github.com/lkretschmer/deepl-go
 ## 🚀 Usage
 
 ### Creating a Client
+
 Create a new DeepL client by providing your API key:
+
 ```go
 client := deepl.NewClient("your_api_key_here")
 ```
+
 ### Translating Text
+
 Translate a single string to a target language:
+
 ```go
 translation, err := client.TranslateText("Hello, world!", "DE")
 if err != nil {
@@ -62,16 +68,70 @@ fmt.Println("Translated text:", translation.Text)
 
 ---
 
+## 🧪 Testing
+
+### Running Unit Tests
+
+Run the standard unit tests:
+
+```bash
+go test -v ./...
+```
+
+### Running E2E Tests
+
+This project includes End-to-End (E2E) tests that use the [DeepL Mock Server](https://github.com/DeepLcom/deepl-mock) to simulate real API interactions without requiring an actual API key.
+
+- Requirements
+  - Docker
+  - Docker Compose
+
+#### Running E2E and Unit Tests Together
+
+```bash
+# Start the mock server
+docker compose up deepl-mock -d
+
+# Run all tests (unit + E2E)
+docker compose run --rm deepl-test
+
+# Clean up
+docker compose down --remove-orphans
+```
+
+Alternatively, if you have `make` installed:
+
+```bash
+make test-all
+```
+
+#### Running E2E Tests Locally Only
+
+```bash
+# Start the mock server
+docker compose up deepl-mock -d
+
+# Run E2E tests only
+go test -tags=e2e -v ./...
+
+# Clean up
+docker compose down --remove-orphans
+```
+
+The E2E tests are automatically run in GitHub Actions CI for all pull requests and pushes to the main branch.
+
+---
+
 ## 📄 License
+
 This project is licensed under the MIT License.
 See the [LICENSE][license_url] file for details.
 
 ---
 
 ## ⚠️ Disclaimer
+
 This client library is not an official DeepL product. For official documentation and terms, please visit [DeepL API][deepl_api_docs].
-
-
 
 [repo_url]: https://github.com/lkretschmer/deepl-go
 [repo_logo_img]: https://raw.githubusercontent.com/lkretschmer/deepl-go/refs/heads/main/.github/logo.svg
